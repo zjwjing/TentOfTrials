@@ -1,4 +1,5 @@
 import React from 'react';
+import { withErrorBoundary } from '../components/ErrorBoundary';
 
 const settingsSections = [
   {
@@ -40,7 +41,7 @@ const settingsSections = [
   },
 ];
 
-const Settings: React.FC = () => {
+const SettingsContent: React.FC = () => {
   const [activeSection, setActiveSection] = React.useState('general');
   const [dirty, setDirty] = React.useState(false);
 
@@ -116,5 +117,7 @@ const Settings: React.FC = () => {
     </div>
   );
 };
+
+const Settings = withErrorBoundary(SettingsContent, { name: 'the settings page' });
 
 export default Settings;

@@ -1,4 +1,5 @@
 import React from 'react';
+import { withErrorBoundary } from '../components/ErrorBoundary';
 import { useDashboardStats } from '../hooks';
 
 const statCards = [
@@ -10,7 +11,7 @@ const statCards = [
   { key: 'uptime', label: 'Uptime', color: '#0891b2', suffix: '%' },
 ];
 
-const Dashboard: React.FC = () => {
+const DashboardContent: React.FC = () => {
   const { data: stats, isLoading, error } = useDashboardStats();
 
   if (isLoading) {
@@ -77,5 +78,7 @@ const Dashboard: React.FC = () => {
     </div>
   );
 };
+
+const Dashboard = withErrorBoundary(DashboardContent, { name: 'the dashboard' });
 
 export default Dashboard;

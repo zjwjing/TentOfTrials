@@ -30,6 +30,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import { withErrorBoundary } from '../components/ErrorBoundary';
 
 // ---------------------------------------------------------------------------
 // TYPES
@@ -111,7 +112,7 @@ const ACTIVE_ISSUES = MOCK_METRICS.filter(m => m.status !== 'healthy');
 // COMPONENT
 // ---------------------------------------------------------------------------
 
-export function AdminPage() {
+function AdminPageContent() {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -617,5 +618,7 @@ export function AdminPage() {
     </div>
   );
 }
+
+export const AdminPage = withErrorBoundary(AdminPageContent, { name: 'the admin page' });
 
 export default AdminPage;

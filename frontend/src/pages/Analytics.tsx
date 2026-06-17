@@ -1,4 +1,5 @@
 import React from 'react';
+import { withErrorBoundary } from '../components/ErrorBoundary';
 
 const metricPlaceholders = [
   { id: 'requests', label: 'Request Volume', type: 'line' },
@@ -9,7 +10,7 @@ const metricPlaceholders = [
   { id: 'sessions', label: 'Session Duration', type: 'bar' },
 ];
 
-const Analytics: React.FC = () => {
+const AnalyticsContent: React.FC = () => {
   const [timeRange, setTimeRange] = React.useState('24h');
 
   return (
@@ -60,5 +61,7 @@ const Analytics: React.FC = () => {
     </div>
   );
 };
+
+const Analytics = withErrorBoundary(AnalyticsContent, { name: 'the analytics page' });
 
 export default Analytics;
