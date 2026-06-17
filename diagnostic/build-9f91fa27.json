@@ -1,0 +1,18 @@
+{
+  "commit": "9f91fa27",
+  "timestamp": "2026-06-17T15:45:38Z",
+  "branch": "feature/type-hints",
+  "pr": 112,
+  "modules": {
+    "backend": {"status": "fail", "reason": "missing rust toolchain"},
+    "frontend": {"status": "pass"},
+    "market": {"status": "fail", "reason": "missing go toolchain"},
+    "frailbox": {"status": "fail", "reason": "missing gcc"},
+    "engine": {"status": "pass"},
+    "ai_reviewer": {"status": "pass"},
+    "todo_audit": {"status": "pass"},
+    "legacy_caps": {"status": "pass"},
+    "error_boundaries": {"status": "pass"},
+    "python_docstrings": {"status": "pass"}
+  }
+}
