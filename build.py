@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""Coordinate the Tent of Trials build, diagnostics, and environment validation.
+
+This module discovers project components, runs their configured build steps, and records diagnostic artifacts for troubleshooting failures.
+"""
 
 import argparse
 import datetime
