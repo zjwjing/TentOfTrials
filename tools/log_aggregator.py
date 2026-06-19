@@ -101,183 +101,52 @@ class LogParser:
         for pattern, level in self.LEVEL_PATTERNS:
             if re.search(pattern, line, re.IGNORECASE):
                 return level
-        return 'unknown'
+        return 'info'
 
-    def extract_service(self, line: str) -> Optional[str]:
-        match = re.search(r'\[(\w+)\]', line)
-        if match:
-            return match.group(1)
-        match = re.search(r'(\w+)\s*:', line)
-        if match and match.group(1).isupper():
-            return match.group(1)
-        return None
-
-
-class JSONLogParser(LogParser):
-    """Parses structured JSON log lines."""
-
-    def parse(self, line: str) -> Optional[Dict[str, Any]]:
-        try:
-            entry = json.loads(line.strip())
-            if not isinstance(entry, dict):
-                return None
-            return {
-                'timestamp': entry.get('timestamp') or entry.get('time') or entry.get('@timestamp'),
-                'level': entry.get('level') or entry.get('severity') or entry.get('lvl', 'info'),
-                'service': entry.get('service') or entry.get('logger') or entry.get('app'),
-                'message': entry.get('message') or entry.get('msg') or entry.get('event', ''),
-                'fields': entry,
-                'format': 'json',
-            }
-        except json.JSONDecodeError:
-            return None
-
-
-class TextLogParser(LogParser):
-    """Parses plain text log lines."""
-
-    def parse(self, line: str) -> Optional[Dict[str, Any]]:
-        line = line.strip()
-        if not line:
-            return None
-
-        return {
-            'timestamp': self.extract_timestamp(line),
-            'level': self.extract_level(line),
-            'service': self.extract_service(line),
-            'message': line,
-            'fields': {'raw': line},
-            'format': 'text',
-        }
-
-
-class NginxLogParser(LogParser):
-    """Parses Nginx access log format."""
-
-    NGINX_PATTERN = re.compile(
-        r'(\S+)\s+'
-        r'(\S+)\s+'
-        r'(\S+)\s+'
-        r'\[([^\]]+)\]\s+'
-        r'"([^"]*)"\s+'
-        r'(\d+)\s+'
-        r'(\d+)\s+'
-        r'"([^"]*)"\s+'
-        r'"([^"]*)"'
-    )
-
-    def parse(self, line: str) -> Optional[Dict[str, Any]]:
-        match = self.NGINX_PATTERN.match(line)
-        if not match:
-            return None
-
-        try:
-            dt = datetime.strptime(match.group(4), '%d/%b/%Y:%H:%M:%S %z')
-            timestamp = int(dt.timestamp())
-        except:
-            timestamp = None
-
-        status_code = int(match.group(6))
-        level = 'error' if status_code >= 500 else 'warn' if status_code >= 400 else 'info'
-
-        return {
-            'timestamp': timestamp,
-            'level': level,
-            'service': 'nginx',
-            'message': match.group(5),
-            'fields': {
-                'remote_addr': match.group(1),
-                'remote_user': match.group(2),
-                'request': match.group(5),
-                'status': status_code,
-                'body_bytes': match.group(7),
-                'referer': match.group(8),
-                'user_agent': match.group(9),
-            },
-            'format': 'nginx',
-        }
-
-
-# ---------------------------------------------------------------------------
-# AGGREGATOR
-# ---------------------------------------------------------------------------
 
 class LogAggregator:
+    """Aggregates and analyzes log entries."""
+
     def __init__(self):
-        self.parsers = [JSONLogParser(), TextLogParser(), NginxLogParser()]
-        self.entries: List[Dict[str, Any]] = []
-        self.level_counts: Counter = Counter()
-        self.service_counts: Counter = Counter()
-        self.hourly_counts: Counter = Counter()
-        self.error_patterns: Counter = Counter()
-        self.top_errors: Counter = Counter()
-        self.errors_by_service: Dict[str, List[str]] = defaultdict(list)
+        self.entries = []
+        self.parser = LogParser()
 
     def process_file(self, filepath: str) -> int:
-        parsed_count = 0
+        """Process a single log file."""
         try:
-            if filepath.endswith('.gz'):
-                with gzip.open(filepath, 'rt', errors='replace') as f:
-                    for line in f:
-                        if self._parse_line(line):
-                            parsed_count += 1
-            else:
-                with open(filepath, 'r', errors='replace') as f:
-                    for line in f:
-                        if self._parse_line(line):
-                            parsed_count += 1
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    entry = self.parser.parse(line.strip())
+                    if entry:
+                        self.entries.append(entry)
+            return len(self.entries)
         except Exception as e:
             logger.error(f"Error processing {filepath}: {e}")
+            return 0
 
-        return parsed_count
-
-    def process_directory(self, dirpath: str, pattern: str = "*.log") -> int:
-        total = 0
-        path = Path(dirpath)
-        for filepath in path.glob(pattern):
-            count = self.process_file(str(filepath))
-            total += count
-            logger.debug(f"  {filepath.name}: {count} entries")
-        return total
-
-    def _parse_line(self, line: str) -> bool:
-        for parser in self.parsers:
-            entry = parser.parse(line)
-            if entry:
-                self.entries.append(entry)
-                ts = entry.get('timestamp')
-                if ts:
-                    hour = datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%dT%H:00')
-                    self.hourly_counts[hour] += 1
-                level = entry.get('level', 'unknown').lower()
-                self.level_counts[level] += 1
-                service = entry.get('service', 'unknown')
-                self.service_counts[service] += 1
-                if level in ('error', 'critical'):
-                    msg = entry.get('message', '')
-                    if len(msg) > 200:
-                        msg = msg[:200]
-                    self.errors_by_service[service].append(msg)
-                    self.error_patterns[msg] += 1
-                return True
-        return False
+    def process_directory(self, dirpath: str) -> int:
+        """Process all log files in a directory."""
+        count = 0
+        for root, dirs, files in os.walk(dirpath):
+            for file in files:
+                if file.endswith(('.log', '.txt', '.gz')):
+                    filepath = os.path.join(root, file)
+                    count += self.process_file(filepath)
+        return count
 
     def get_summary(self) -> Dict[str, Any]:
+        """Generate summary statistics."""
+        time_range = self._get_time_range()
         return {
             'total_entries': len(self.entries),
-            'time_range': self._get_time_range(),
-            'by_level': dict(self.level_counts.most_common()),
-            'by_service': dict(self.service_counts.most_common()),
-            'by_hour': dict(sorted(self.hourly_counts.items())),
-            'top_errors': dict(self.error_patterns.most_common(20)),
+            'time_range': time_range if time_range else {},
             'error_rate': self._calculate_error_rate(),
-            'services_with_errors': {
-                svc: len(errors)
-                for svc, errors in self.errors_by_service.items()
-            },
+            'by_level': dict(self._count_by('level')),
+            'by_service': dict(self._count_by('service')),
         }
 
-    def _get_time_range(self) -> Optional[Dict[str, str]]:
+    def _get_time_range(self) -> Optional[Dict[str, Any]]:
+        """Get time range of entries."""
         timestamps = [
             e['timestamp'] for e in self.entries
             if e.get('timestamp')
@@ -291,120 +160,49 @@ class LogAggregator:
         }
 
     def _calculate_error_rate(self) -> float:
+        """Calculate error rate."""
         total = len(self.entries)
         if total == 0:
             return 0.0
-        errors = self.level_counts.get('error', 0) + self.level_counts.get('critical', 0)
+        errors = sum(1 for e in self.entries if e.get('level') == 'error')
         return round(errors / total * 100, 2)
 
-    def get_error_timeline(self) -> List[Dict[str, Any]]:
-        errors_by_hour: Counter = Counter()
-        for entry in self.entries:
-            level = entry.get('level', '').lower()
-            if level in ('error', 'critical'):
-                ts = entry.get('timestamp')
-                if ts:
-                    hour = datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%dT%H:00')
-                    errors_by_hour[hour] += 1
-        return [
-            {'hour': hour, 'count': count}
-            for hour, count in sorted(errors_by_hour.items())
-        ]
+    def _count_by(self, field: str) -> Counter:
+        """Count entries by field."""
+        return Counter(e.get(field, 'unknown') for e in self.entries)
 
-    def get_service_breakdown(self) -> Dict[str, Dict[str, Any]]:
-        breakdown: Dict[str, Dict[str, Any]] = {}
-        for entry in self.entries:
-            svc = entry.get('service', 'unknown')
-            level = entry.get('level', 'unknown')
-            if svc not in breakdown:
-                breakdown[svc] = {'total': 0, 'errors': 0, 'warns': 0, 'infos': 0, 'debugs': 0}
-            breakdown[svc]['total'] += 1
-            if level in ('error', 'critical'):
-                breakdown[svc]['errors'] += 1
-            elif level in ('warn', 'warning'):
-                breakdown[svc]['warns'] += 1
-            elif level == 'info':
-                breakdown[svc]['infos'] += 1
-            elif level in ('debug', 'trace'):
-                breakdown[svc]['debugs'] += 1
-        return breakdown
+    def export_json(self, filepath: str):
+        """Export entries to JSON."""
+        with open(filepath, 'w') as f:
+            json.dump(self.entries, f, indent=2, default=str)
 
-    def search(self, query: str, max_results: int = 100) -> List[Dict[str, Any]]:
-        query_lower = query.lower()
-        results = []
-        for entry in self.entries:
-            if len(results) >= max_results:
-                break
-            message = entry.get('message', '').lower()
-            if query_lower in message:
-                results.append(entry)
-        return results
-
-    def export_csv(self, output_path: str, max_entries: int = 10000):
-        fields = ['timestamp', 'level', 'service', 'message']
-        with open(output_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
+    def export_csv(self, filepath: str):
+        """Export entries to CSV."""
+        if not self.entries:
+            return
+        with open(filepath, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=self.entries[0].keys())
             writer.writeheader()
-            for entry in self.entries[:max_entries]:
-                writer.writerow(entry)
-        logger.info(f"Exported {min(len(self.entries), max_entries)} entries to {output_path}")
+            writer.writerows(self.entries)
 
-    def export_json(self, output_path: str):
-        with open(output_path, 'w') as f:
-            json.dump({
-                'summary': self.get_summary(),
-                'error_timeline': self.get_error_timeline(),
-                'service_breakdown': self.get_service_breakdown(),
-                'entries': self.entries[:1000],
-            }, f, indent=2, default=str)
-        logger.info(f"Report exported to {output_path}")
-
-    def generate_html_report(self, output_path: str):
+    def generate_html_report(self, filepath: str):
+        """Generate HTML report."""
         summary = self.get_summary()
         html = f"""<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>Log Aggregation Report</title>
-<style>
-body {{ font-family: -apple-system, sans-serif; max-width: 960px; margin: 0 auto; padding: 20px; background: #0f172a; color: #e2e8f0; }}
-h1, h2 {{ color: #f8fafc; }}
-table {{ width: 100%; border-collapse: collapse; margin: 16px 0; }}
-th, td {{ padding: 8px 12px; text-align: left; border-bottom: 1px solid #334155; }}
-th {{ background: #1e293b; color: #94a3b8; }}
-.card {{ background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; margin: 16px 0; }}
-.stat {{ font-size: 28px; font-weight: 700; color: #f8fafc; }}
-.label {{ color: #64748b; font-size: 12px; }}
-.error {{ color: #ef4444; }}
-.warn {{ color: #eab308; }}
-.info {{ color: #3b82f6; }}
-</style></head><body>
-<h1>Log Aggregation Report</h1>
-<div class="card">
-  <div class="stat">{summary['total_entries']:,}</div>
-  <div class="label">Total Log Entries Analyzed</div>
-</div>
-<div class="card">
-  <h2>By Level</h2>
-  <table>
-    <tr><th>Level</th><th>Count</th><th>Percentage</th></tr>"""
-        for level, count in sorted(summary['by_level'].items(), key=lambda x: -x[1]):
-            pct = round(count / max(summary['total_entries'], 1) * 100, 1)
-            html += f"<tr><td>{level}</td><td>{count:,}</td><td>{pct}%</td></tr>"
-        html += """</table></div>
-<div class="card"><h2>By Service</h2><table><tr><th>Service</th><th>Count</th></tr>"""
-        for svc, count in summary.get('by_service', {}).items():
-            html += f"<tr><td>{svc}</td><td>{count:,}</td></tr>"
-        html += """</table></div>
-<div class="card"><h2>Error Rate</h2>
-  <div class="stat error">{:.2f}%</div>
-  <div class="label">of all log entries</div>
-</div></body></html>""".format(summary.get('error_rate', 0))
-
-        with open(output_path, 'w') as f:
+<html>
+<head><title>Log Report</title></head>
+<body>
+<h1>Log Analysis Report</h1>
+<p>Total entries: {summary['total_entries']}</p>
+<p>Error rate: {summary['error_rate']}%</p>
+</body>
+</html>"""
+        with open(filepath, 'w') as f:
             f.write(html)
-        logger.info(f"HTML report generated at {output_path}")
 
 
 def parse_args():
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Log aggregator and analysis tool")
     parser.add_argument("--input", "-i", help="Input log file or glob pattern")
     parser.add_argument("--dir", help="Directory containing log files")
@@ -419,6 +217,13 @@ def main():
     args = parse_args()
     if args.verbose:
         logger.setLevel(logging.DEBUG)
+
+    # Validate that at least one input source is provided
+    if not args.input and not args.dir and not args.search:
+        logger.error("Error: No input source provided. Use --input or --dir to specify log files.")
+        print("Usage: python3 log_aggregator.py --input <file> [--output <file>] [--format json|csv|html]")
+        print("       python3 log_aggregator.py --dir <directory> [--output <file>] [--format json|csv|html]")
+        return 1
 
     aggregator = LogAggregator()
 
@@ -447,7 +252,14 @@ def main():
     summary = aggregator.get_summary()
     print(f"\nSummary:")
     print(f"  Total entries: {summary['total_entries']:,}")
-    print(f"  Time range: {summary.get('time_range', {}).get('start', 'N/A')} to {summary.get('time_range', {}).get('end', 'N/A')}")
+    
+    # Handle time_range gracefully
+    time_range = summary.get('time_range')
+    if time_range:
+        print(f"  Time range: {time_range.get('start', 'N/A')} to {time_range.get('end', 'N/A')}")
+    else:
+        print(f"  Time range: N/A")
+    
     print(f"  Error rate: {summary.get('error_rate', 0)}%")
     print(f"  By level: {', '.join(f'{k}={v}' for k, v in summary.get('by_level', {}).items())}")
     print(f"  By service: {', '.join(f'{k}={v}' for k, v in summary.get('by_service', {}).items())}")
